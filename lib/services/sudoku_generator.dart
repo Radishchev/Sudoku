@@ -3,14 +3,12 @@ import 'dart:math';
 class SudokuGenerator {
   final Random _rand = Random();
 
-  /// Generates a complete valid Sudoku board
   List<List<int>> generateFullSolution() {
     List<List<int>> board = List.generate(9, (_) => List.filled(9, 0));
     _fillBoard(board);
     return board;
   }
 
-  /// Generates a Sudoku puzzle from a complete board
   List<List<int>> generatePuzzle(List<List<int>> fullBoard, int clues) {
     List<List<int>> puzzle = fullBoard
         .map((row) => List<int>.from(row))
@@ -29,8 +27,6 @@ class SudokuGenerator {
     return puzzle;
   }
 
-  // ------------------- PRIVATE HELPERS -------------------
-
   bool _fillBoard(List<List<int>> board) {
     for (int row = 0; row < 9; row++) {
       for (int col = 0; col < 9; col++) {
@@ -43,7 +39,7 @@ class SudokuGenerator {
               board[row][col] = 0;
             }
           }
-          return false; // backtrack
+          return false;
         }
       }
     }
@@ -61,7 +57,6 @@ class SudokuGenerator {
     return true;
   }
 
-  /// Checks if a Sudoku board is completely and correctly solved
   bool isSolved(List<List<int>> board) {
     for (int i = 0; i < 9; i++) {
       for (int j = 0; j < 9; j++) {
@@ -71,5 +66,10 @@ class SudokuGenerator {
       }
     }
     return true;
+  }
+
+  bool isMoveValid(List<List<int>> board, int row, int col, int number) {
+    if (board[row][col] != 0) return false;
+    return _isSafe(board, row, col, number);
   }
 }

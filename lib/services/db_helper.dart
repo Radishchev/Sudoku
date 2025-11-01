@@ -37,55 +37,85 @@ class DBHelper {
     int elapsedTime = 0,
     String? completedAt,
   }) async {
-    final db = await getDatabase();
-    // Check if a game already exists for this difficulty and not completed
-    var existing = await db.query(
-      'games',
-      where: 'difficulty = ? AND completed_at IS NULL',
-      whereArgs: [difficulty],
-    );
+    try {
+      final db = await getDatabase();
+      // Check if a game already exists for this difficulty and not completed
+      var existing = await db.query(
+        'games',
+        where: 'difficulty = ? AND completed_at IS NULL',
+        whereArgs: [difficulty],
+      );
 
-    Map<String, dynamic> data = {
-      'difficulty': difficulty,
-      'board': jsonEncode(board),
-      'solution': jsonEncode(solution),
-      'is_fixed': jsonEncode(isFixed),
-      'elapsed_time': elapsedTime,
-      'completed_at': completedAt,
-    };
+      // Convert boolean array to int array for JSON encoding
+      List<List<int>> isFixedInt = isFixed
+          .map((row) => row.map((b) => b ? 1 : 0).toList())
+          .toList();
 
-    if (existing.isNotEmpty) {
-      int id = existing.first['id'] as int;
-      return await db.update('games', data, where: 'id = ?', whereArgs: [id]);
-    } else {
-      return await db.insert('games', data);
+      Map<String, dynamic> data = {
+        'difficulty': difficulty,
+        'board': jsonEncode(board),
+        'solution': jsonEncode(solution),
+        'is_fixed': jsonEncode(isFixedInt),
+        'elapsed_time': elapsedTime,
+        'completed_at': completedAt,
+      };
+
+      if (existing.isNotEmpty) {
+        int id = existing.first['id'] as int;
+        int result = await db.update('games', data, where: 'id = ?', whereArgs: [id]);
+        return result;
+      } else {
+        int result = await db.insert('games', data);
+        return result;
+      }
+    } catch (e) {
+      print('Error in saveGame: $e');
+      rethrow;
     }
   }
 
   // Load saved game for a difficulty
   static Future<Map<String, dynamic>?> loadGame(String difficulty) async {
-    final db = await getDatabase();
-    var result = await db.query(
-      'games',
-      where: 'difficulty = ? AND completed_at IS NULL',
-      whereArgs: [difficulty],
-      limit: 1,
-    );
-    if (result.isEmpty) return null;
+    try {
+      final db = await getDatabase();
+      var result = await db.query(
+        'games',
+        where: 'difficulty = ? AND completed_at IS NULL',
+        whereArgs: [difficulty],
+        limit: 1,
+      );
+      if (result.isEmpty) return null;
 
-    var row = result.first;
-    return {
-      'board': (jsonDecode(row['board'] as String) as List)
+      var row = result.first;
+      
+      // Decode board
+      List<List<int>> board = (jsonDecode(row['board'] as String) as List)
           .map((r) => (r as List).map((e) => e as int).toList())
-          .toList(),
-      'solution': (jsonDecode(row['solution'] as String) as List)
+          .toList()
+          .cast<List<int>>();
+      
+      // Decode solution
+      List<List<int>> solution = (jsonDecode(row['solution'] as String) as List)
           .map((r) => (r as List).map((e) => e as int).toList())
-          .toList(),
-      'is_fixed': (jsonDecode(row['is_fixed'] as String) as List)
-          .map((r) => (r as List).map((e) => e as bool).toList())
-          .toList(),
-      'elapsed_time': row['elapsed_time'] as int,
-    };
+          .toList()
+          .cast<List<int>>();
+      
+      // Decode is_fixed (convert from int array back to bool array)
+      List<List<bool>> isFixed = (jsonDecode(row['is_fixed'] as String) as List)
+          .map((r) => (r as List).map((e) => (e as int) == 1).toList())
+          .toList()
+          .cast<List<bool>>();
+      
+      return {
+        'board': board,
+        'solution': solution,
+        'is_fixed': isFixed,
+        'elapsed_time': row['elapsed_time'] as int,
+      };
+    } catch (e) {
+      print('Error in loadGame: $e');
+      return null;
+    }
   }
 
   // Mark game as completed

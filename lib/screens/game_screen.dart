@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import '../services/sudoku_generator.dart';
 import '../services/db_helper.dart';
@@ -25,6 +26,7 @@ class _GameScreenState extends State<GameScreen> {
   bool _isLoading = true;
   bool _isInitialized = false;
   int _lastSavedSeconds = 0;
+  int _hintCount = 3; // Allow 3 hints per game
 
   @override
   void initState() {
@@ -190,20 +192,118 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _onCellTap(int row, int col) {
+    HapticFeedback.selectionClick();
     setState(() {
       selectedRow = row;
       selectedCol = col;
     });
   }
 
+  Future<void> _showHint() async {
+    if (_hintCount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No hints remaining!'),
+          backgroundColor: Colors.orange[400],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (selectedRow == null || selectedCol == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please select a cell first!'),
+          backgroundColor: Colors.orange[400],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (_isFixed[selectedRow!][selectedCol!]) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('This cell is already filled!'),
+          backgroundColor: Colors.orange[400],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (_puzzle[selectedRow!][selectedCol!] != 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('This cell already has a value!'),
+          backgroundColor: Colors.orange[400],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    HapticFeedback.mediumImpact();
+    setState(() {
+      _puzzle[selectedRow!][selectedCol!] = _solution[selectedRow!][selectedCol!];
+      _isFixed[selectedRow!][selectedCol!] = true; // Mark as fixed after hint
+      _hintCount--;
+    });
+
+    await _saveGame();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Hint used! $_hintCount remaining'),
+        backgroundColor: Colors.green[600],
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+
+    // Check if game is complete
+    bool isComplete = _puzzle.every((row) => row.every((cell) => cell != 0));
+    if (isComplete) {
+      await DBHelper.completeGame(_difficulty, _elapsedSeconds);
+      if (mounted) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            Navigator.pushReplacementNamed(
+              context, 
+              '/win',
+              arguments: {
+                'time': _formatTime(_elapsedSeconds),
+                'difficulty': _difficulty,
+              },
+            );
+          }
+        });
+      }
+    }
+  }
+
   Future<void> _onNumberInput(int number) async {
     if (selectedRow == null || selectedCol == null) return;
     if (_isFixed[selectedRow!][selectedCol!]) return;
+
+    HapticFeedback.lightImpact();
 
     if (_solution[selectedRow!][selectedCol!] == number) {
       setState(() {
         _puzzle[selectedRow!][selectedCol!] = number;
       });
+
+      HapticFeedback.mediumImpact();
 
       // Always save after a valid move
       await _saveGame();
@@ -213,8 +313,9 @@ class _GameScreenState extends State<GameScreen> {
       if (isComplete) {
         // Mark game as completed
         await DBHelper.completeGame(_difficulty, _elapsedSeconds);
+        HapticFeedback.heavyImpact();
         if (mounted) {
-          Future.delayed(const Duration(milliseconds: 200), () {
+          Future.delayed(const Duration(milliseconds: 300), () {
             if (mounted) {
               Navigator.pushReplacementNamed(
                 context, 
@@ -229,12 +330,20 @@ class _GameScreenState extends State<GameScreen> {
         }
       }
     } else {
+      HapticFeedback.vibrate();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Invalid move!'),
-          backgroundColor: Colors.red[400],
+          content: const Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Invalid move!'),
+            ],
+          ),
+          backgroundColor: Colors.red[500],
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          duration: const Duration(seconds: 1),
         ),
       );
     }
@@ -244,6 +353,7 @@ class _GameScreenState extends State<GameScreen> {
     if (selectedRow == null || selectedCol == null) return;
     if (_isFixed[selectedRow!][selectedCol!]) return;
 
+    HapticFeedback.lightImpact();
     setState(() {
       _puzzle[selectedRow!][selectedCol!] = 0;
     });
@@ -279,9 +389,11 @@ class _GameScreenState extends State<GameScreen> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return Scaffold(
-        backgroundColor: Colors.deepPurple[50],
+        backgroundColor: const Color(0xFF121212),
         body: const Center(
-          child: CircularProgressIndicator(),
+          child: CircularProgressIndicator(
+            color: Colors.deepPurple,
+          ),
         ),
       );
     }
@@ -294,78 +406,131 @@ class _GameScreenState extends State<GameScreen> {
         }
       },
       child: Scaffold(
-        backgroundColor: Colors.deepPurple[50],
+        backgroundColor: const Color(0xFF121212),
         appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.deepPurple,
-        foregroundColor: Colors.white,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _difficulty,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
-            ),
-            const Text(
-              'Sudoku',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () async {
-            await _saveOnExit();
-            if (mounted) {
-              Navigator.pop(context);
-            }
-          },
-        ),
-        actions: [
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.timer, size: 18),
-                const SizedBox(width: 4),
-                Text(
-                  _formatTime(_elapsedSeconds),
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
+          elevation: 0,
+          backgroundColor: const Color(0xFF1E1E2E),
+          foregroundColor: Colors.white,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _difficulty,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.white.withOpacity(0.9),
                 ),
-              ],
-            ),
+              ),
+              const Text(
+                'Sudoku',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.save),
-            tooltip: 'Save Game',
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
             onPressed: () async {
-              await _saveGame();
+              await _saveOnExit();
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Game saved!'),
-                    duration: Duration(seconds: 1),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                Navigator.pop(context);
               }
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'New Game',
-            onPressed: _onNewGame,
-          ),
-        ],
+          actions: [
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: Colors.deepPurple.withOpacity(0.5),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.timer, size: 18),
+                  const SizedBox(width: 6),
+                  Text(
+                    _formatTime(_elapsedSeconds),
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: Stack(
+                children: [
+                  const Icon(Icons.lightbulb_outline),
+                  if (_hintCount > 0)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(
+                          color: Colors.orange,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          '$_hintCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              tooltip: 'Hint ($_hintCount remaining)',
+              onPressed: _showHint,
+            ),
+            IconButton(
+              icon: const Icon(Icons.save),
+              tooltip: 'Save Game',
+              onPressed: () async {
+                await _saveGame();
+                if (mounted) {
+                  HapticFeedback.lightImpact();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Row(
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.white),
+                          SizedBox(width: 8),
+                          Text('Game saved!'),
+                        ],
+                      ),
+                      backgroundColor: Colors.green[600],
+                      duration: const Duration(seconds: 1),
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'New Game',
+              onPressed: _onNewGame,
+            ),
+          ],
         ),
         body: SafeArea(
           child: Column(
@@ -392,70 +557,116 @@ class _GameScreenState extends State<GameScreen> {
 
   Widget _buildNumberPad() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFF1E1E2E),
+        border: Border(
+          top: BorderSide(
+            color: Colors.deepPurple.withOpacity(0.3),
+            width: 1,
+          ),
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+            spreadRadius: 2,
           ),
         ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
+          // Number pad grid (3x3 + clear button)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              for (int i = 1; i <= 9; i++)
-                SizedBox(
-                  width: 50,
-                  height: 50,
-                  child: ElevatedButton(
-                    onPressed: () => _onNumberInput(i),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurple[100],
-                      foregroundColor: Colors.deepPurple[900],
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: Text(
-                      i.toString(),
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-              SizedBox(
-                width: 50,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _clearCell,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red[400],
-                    foregroundColor: Colors.white,
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: EdgeInsets.zero,
-                  ),
-                  child: const Icon(Icons.clear, size: 24),
+              for (int i = 1; i <= 3; i++)
+                _buildNumberButton(i, isFirst: i == 1, isLast: i == 3),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (int i = 4; i <= 6; i++)
+                _buildNumberButton(i, isFirst: i == 4, isLast: i == 6),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (int i = 7; i <= 9; i++)
+                _buildNumberButton(i, isFirst: i == 7, isLast: i == 9),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Clear button
+          SizedBox(
+            width: 280,
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: _clearCell,
+              icon: const Icon(Icons.backspace_outlined, size: 22),
+              label: const Text(
+                'Clear',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-            ],
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[700],
+                foregroundColor: Colors.white,
+                elevation: 3,
+                shadowColor: Colors.red.withOpacity(0.4),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
           ),
         ],
       ),
-      );
+    );
+  }
+
+  Widget _buildNumberButton(int number, {bool isFirst = false, bool isLast = false}) {
+    return Container(
+      margin: EdgeInsets.only(
+        left: isFirst ? 0 : 8,
+        right: isLast ? 0 : 8,
+      ),
+      width: 70,
+      height: 70,
+      child: ElevatedButton(
+        onPressed: () => _onNumberInput(number),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF2A2A3E),
+          foregroundColor: Colors.deepPurple[300],
+          elevation: 4,
+          shadowColor: Colors.deepPurple.withOpacity(0.3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(
+              color: Colors.deepPurple.withOpacity(0.3),
+              width: 1,
+            ),
+          ),
+          padding: EdgeInsets.zero,
+        ),
+        child: Text(
+          number.toString(),
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+            color: Colors.deepPurple[200],
+          ),
+        ),
+      ),
+    );
   }
 }
